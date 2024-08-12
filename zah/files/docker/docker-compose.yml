@@ -1,0 +1,80 @@
+services:
+  #Sites
+  zah:
+    image: wavygravy1/zah:1.01
+    container_name: zah
+    deploy:
+      restart_policy: 
+        condition: always
+    tty: true
+    working_dir: /var/www/html/
+    env_file: ./zah.env
+    networks:
+      zah:
+        aliases:
+          - zah.backend
+    depends_on:
+      - webserver
+
+  #Nginx Service
+  webserver:
+    image: nginx:latest
+    container_name: webserver
+    deploy:
+     restart_policy: 
+        condition: always
+    tty: true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d/:/etc/nginx/conf.d/
+      - ./nginx/ssl/:/etc/nginx/ssl/
+    networks:
+      - zah
+
+  #Socketi
+  websocket:
+    image: 'quay.io/soketi/soketi:latest-16-alpine'
+    container_name: websocket
+    deploy:
+     restart_policy: 
+        condition: always
+    environment:
+      - SOKETI_DEBUG='${DEBUG:-1}'
+      - SOKETI_METRICS_SERVER_PORT='9601'
+      - PUSHER_PORT='6001'
+      - PUSHER_SCHEME='http'
+      - SOKETI_DEFAULT_APP_SECRET='${SOKETI_DEFAULT_APP_SECRET}'
+      - SOKETI_DEFAULT_APP_KEY='${SOKETI_DEFAULT_APP_KEY}'
+      - SOKETI_DEFAULT_APP_ID='${SOKETI_DEFAULT_APP_ID}'
+    ports:
+      - '${SOKETI_PORT:-6001}:6001'
+      - '${SOKETI_METRICS_SERVER_PORT:-9601}:9601'
+    networks:
+      - zah
+
+  #MySQL Service
+  db:
+    image: mysql:8.0.36
+    container_name: db
+    deploy:
+      restart_policy: 
+        condition: on-failure
+    tty: true
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_DATABASE: zah
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+    volumes:
+      - dbdata:/var/lib/mysql/
+    networks:
+      - zah
+
+volumes:
+  dbdata:
+    driver: local
+networks:
+  zah:
+    driver: bridge

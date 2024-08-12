@@ -1,0 +1,168 @@
+- name: webserver setup
+  hosts: zahgcp
+  become_user: root
+  become: true
+  vars:
+    - swap_configure: true
+    - swap_enable: true
+    - swap_file_path: /swapfile
+    - swap_file_size_mb: 2048
+    - swappiness: 5
+    - ansible_dir: /home/omar/sites/repos/ansible
+    - allow_world_readable_tmpfiles: true
+
+  vars_prompt:
+    - name: docker_username
+      prompt: What is your docker username
+      private: false
+
+    - name: docker_password
+      prompt: What is your docker password
+  tasks:
+    - name: create developers group
+      group:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - zah
+        - developers
+
+    - name: create users
+      user:
+        name: "{{ item }}"
+        groups: zah,developers,ubuntu
+        shell: /bin/bash
+      loop:
+        - omar
+          #        - zah
+
+    - name: update cache and install docker pre-reqs
+      apt:
+        update_cache: yes
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - vim
+          - pip
+        state: latest
+
+    - name: Add Docker's official GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /etc/apt/keyrings/docker.gpg
+
+    - name: Set up Docker repo
+      apt_repository:
+        filename: docker.list
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu   jammy stable"
+        update_cache: yes
+
+    - name: Install Docker
+      apt:
+        update_cache: yes
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: latest
+
+    - name: add users to docker group
+      user:
+        name: "{{ item }}"
+        groups: docker
+        append: yes
+      loop:
+        - zah
+        - omar
+
+    - name: Create docker folder
+      file:
+        path: /srv/docker
+        state: directory
+        mode: '744'
+        owner: zah
+        group: docker
+
+    - name: Copy config
+      copy:
+        src: "{{ ansible_dir }}/zah/files/docker/"
+        dest: /srv/docker/
+        mode: '775'
+        owner: zah
+        group: docker
+
+    - name: move env
+      copy:
+        src: /srv/docker/env
+        dest: /srv/docker/.env
+        owner: zah
+        group: docker
+        remote_src: true
+
+    - name: delete env
+      file: 
+        path: /srv/docker/env
+        state: absent
+
+    - name: install docker pip module
+      pip:
+        name: docker
+
+    - name: log into docker
+      docker_login:
+        username: "{{ docker_username }}"
+        password: "{{ docker_password }}"
+
+    - name: Start Docker
+      shell: |
+        cd /srv/docker
+        docker compose up -d
+
+    - name: configure swap
+      when: swap_enable | bool
+      block:
+
+        - name: Create or change the size of swap file
+          command: dd if=/dev/zero of={{swap_file_path}} count={{swap_file_size_mb}} bs=1MiB
+          register: swap_file_created
+
+        - name: change swap file permissions
+          file:
+            path: "{{ swap_file_path }}"
+            mode: 0600
+
+        - name: Check if swap is formatted
+          shell: file {{ swap_file_path }} | grep 'swap file'
+          register: swap_file_is_formatted
+          changed_when: false
+          failed_when: false
+
+        - name: Format swap file if it's not formatted
+          command: mkswap {{ swap_file_path }}
+          when: >
+            ('rc' in swap_file_is_formatted and swap_file_is_formatted.rc > 0)
+            or swap_file_created.changed
+
+        - name: Add swap entry to fstab
+          mount:
+            name: none
+            src: "{{ swap_file_path }}"
+            fstype: swap
+            opts: sw
+            passno: '0'
+            dump: '0'
+            state: present
+
+        - name: Turn on swap
+          shell: swapon -a
+          # if swap was disabled from the start
+          # or has been disabled to change its params
+          
+        - name: Configure swappiness
+          sysctl:
+            name: vm.swappiness
+            value: "{{ swappiness|string }}"
+            state: present

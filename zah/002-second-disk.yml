@@ -1,0 +1,45 @@
+- name: second drive for docker storage
+  hosts: zahgcp
+
+  tasks:
+    - name: create volume group
+      community.general.lvg:
+        vg: zah-app-vg
+        pvs: /dev/sdb
+        pesize: 32
+
+    - name: create logical volume
+      lvol:
+        vg: zah-app-vg
+        lv: zah-app-lv
+        size: 100%FREE
+
+    - name: format the fs
+      filesystem:
+        fstype: xfs
+        dev: /dev/zah-app-vg/zah-app-lv
+
+    - name: mount the lv on /srv
+      mount:
+        path: /srv
+        src: /dev/zah-app-vg/zah-app-lv
+        fstype: xfs
+        state: mounted
+
+    - name: create docker file if not exist
+      file:
+        path: /srv/docker/data
+        state: directory
+        owner: zah
+        group: docker
+        mode: '0774'
+
+    - name: new docker data root
+      copy:
+        src: files/config/daemon.json
+        dest: /etc/docker/daemon.json
+
+    - name: restart docker
+      systemd:
+        state: restarted
+        name: docker

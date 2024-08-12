@@ -1,0 +1,69 @@
+- name: Postfix setup for sendgrid for sending emails from google cloud vms
+  become: true
+  become_user: root
+  hosts: zahgcp
+  tasks:
+    - name: install packages
+      apt:
+        pkg:
+          - postfix
+          - libsasl2-modules
+        state: latest
+        update_cache: yes
+
+    - name: comment out default transport
+      lineinfile: 
+        path: /etc/postfix/main.cf
+        regexp: '^default_transport'
+        line: '# default_transport = error'
+
+    - name: comment out relay transport
+      lineinfile: 
+        path: /etc/postfix/main.cf
+        regexp: '^relay_transport'
+        line: '# relay_transport = error'
+
+    - name: append to postfix main.cf
+      blockinfile:
+        path: /etc/postfix/main.cf
+        block: |
+          relayhost = [smtp.sendgrid.net]:2525
+          smtp_tls_security_level = encrypt
+          smtp_sasl_auth_enable = yes
+          smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+          header_size_limit = 4096000
+          smtp_sasl_security_options = noanonymous
+
+    - name: create sasl_passwd
+      lineinfile:
+        path: /etc/postfix/sasl_passwd
+        line: "[smtp.sendgrid.net]:2525 apikey:{{ sendgrid_api_key }}"
+        create: true
+
+    - name: generate .db file
+      command: postmap /etc/postfix/sasl_passwd
+
+    - name: check the .db file exists
+      stat:
+        path: /etc/postfix/sasl_passwd.db
+      register: filecheck
+
+    - name: assert the file exists before continuing
+      fail:
+        msg: "file doesn't exist, not continuing"
+      when: not filecheck.stat.exists
+
+    - name: remove credentials file
+      file:
+        path: /etc/postfix/sasl_passwd
+        state: absent
+
+    - name: change ownership of .db file
+      file:
+        path: /etc/postfix/sasl_passwd.db
+        mode: '0600'
+
+    - name: reload configuration
+      systemd:
+        name: postfix
+        state: restarted

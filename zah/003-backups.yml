@@ -1,0 +1,33 @@
+- name: configure mysql backups
+  hosts: zahgcp
+  become: true
+  become_user: root
+
+  tasks:
+    - name: create directory structure
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: zah
+        recurse: yes
+      loop:
+        - "/srv/backup/mysql"
+        - "/srv/scripts"
+
+    - name: copy backup file
+      template:
+        src: templates/mysql_backup.j2
+        dest: /srv/scripts/mysql_backup.sh
+        owner: zah
+        group: zah
+        mode: '0770'
+
+    - name: create cron job
+      cron:
+        name: mysql backups
+        weekday: "0"
+        minute: "10"
+        hour: "5"
+        user: zah
+        job: "/srv/scripts/mysql_backup.sh"
+        cron_file: mysql_backups
